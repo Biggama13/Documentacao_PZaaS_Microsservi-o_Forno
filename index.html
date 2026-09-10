@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PZaaS - Documentação API Forno</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="script.js" defer></script>
+</head>
+<body>
+
+    <header>
+        <h1>🍕 PZaaS - Microsserviço: Forno</h1>
+        <p>Documentação da arquitetura de processamento do forno de Lucas Gama</p>
+    </header>
+
+    <div class="container">
+        
+        <p>Este microsserviço atua como um processador de estado controlado no ecossistema PZaaS. Ele absorve requisições, gerencia a capacidade da fila via Redis, aplica a simulação térmica de 15 segundos e roteia o pedido finalizado suportando condições de rede instáveis através de Fallbacks.</p>
+    
+        <span class="badge">Redis</span>
+        <span class="badge">Fallbacks (Fila e Logger)</span>
+
+        <!-- ROTA GET: HEALTH CHECK -->
+        <div class="endpoint-card">
+            <div class="endpoint-header" style="background-color: rgba(47, 129, 247, 0.1);">
+                <span class="method" style="background-color: #2f81f7;">GET</span>
+                <span class="url">https://pzaas.online/webhook/v1/forno/gama/health</span>
+            </div>
+
+            <div class="content-section">
+                <h3>Monitoramento (Health Check)</h3>
+                <p>Rota leve utilizada pelo Orquestrador para verificar a disponibilidade do serviço do Forno antes do envio de tráfego pesado.</p>
+                
+                <h4>Headers Obrigatórios</h4>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Chave</th>
+                            <th>Tipo</th>
+                            <th>Descrição</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>x-api-key</code></td>
+                            <td>String</td>
+                            <td>Chave de autenticação (Ex: <em>turma2026</em>).</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            
+            <div class="content-section">
+                <h3>Resposta da API</h3>
+                <p><strong>200 OK</strong> - Serviço online e pronto para receber requisições.</p>
+                <pre><code>{
+  "status": "OK",
+  "servico": "Forno"
+}</code></pre>
+            </div>
+        </div>
+
+        <!-- ROTA POST: RECEBER PEDIDO -->
+        <div class="endpoint-card">
+            <div class="endpoint-header">
+                <span class="method">POST</span>
+                <span class="url">https://pzaas.online/webhook/v1/forno/gama</span>
+            </div>
+
+            <div class="content-section">
+                <h3>Processamento do Pedido</h3>
+                <p>Recebe a pizza crua, valida a integridade do contrato, testa a resiliência via Chaos Monkey, aloca espaço no banco de dados e repassa para o Serviço 07 (Fila de Produção).</p>
+                
+                <h4>Headers Obrigatórios</h4>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Chave</th>
+                            <th>Tipo</th>
+                            <th>Descrição</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>x-api-key</code></td>
+                            <td>String</td>
+                            <td>Autenticação do sistema. Retorna Erro 401 se ausente.</td>
+                        </tr>
+                        <tr>
+                            <td><code>x-pedido-id</code></td>
+                            <td>String</td>
+                            <td>Rastreio global de observabilidade. Retorna Erro 400 se ausente.</td>
+                        </tr>
+                        <tr>
+                            <td><code>Content-Type</code></td>
+                            <td>String</td>
+                            <td>Deve ser restrito a <em>application/json</em>.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="content-section">
+                <h3>Corpo da Requisição (Body)</h3>
+                <p>Validação estrita exigindo os identificadores do pedido e da pizza para garantir a rastreabilidade (Erro 400 em caso de divergência).</p>
+                <pre><code>{
+  "pedidoId": "PED-999",
+  "pizzaId": "PIZ-888",
+  "sabor": "Calabresa"
+}</code></pre>
+            </div>
+
+            <div class="content-section">
+                <h3>Matriz de Respostas HTTP</h3>
+                
+                <p><strong>200 OK</strong> - Caminho Feliz.</p>
+                <p><em>Pizza validada, processada no Redis, assada por 15s e roteada para a fila de produção e logger com sucesso.</em></p>
+                <pre><code>{
+  "mensagem": "Pizza processada e enviada para a fila"
+}</code></pre>
+
+                <p><strong>400 Bad Request</strong> - Contrato Quebrado.</p>
+                <p><em>Disparado por falha na validação do payload ou ausência do header de rastreio.</em></p>
+                <pre><code>{
+  "erro": "Dados da pizza invalidos"
+}</code></pre>
+
+                <p><strong>401 Unauthorized</strong> - Falha de Segurança.</p>
+                <p><em>Conexão abortada imediatamente para proteger a camada do banco de dados.</em></p>
+                <pre><code>{
+  "erro": "Chave invalida"
+}</code></pre>
+
+                <p><strong>500 Internal Server Error</strong> - Chaos Monkey.</p>
+                <p><em>Acionado quando a injeção de falha programada atinge o limite de tentativas de retry.</em></p>
+                <pre><code>{
+  "erro": "Falha interna no serviço devido a instabilidade",
+  "detalhes": "timeout_ou_erro"
+}</code></pre>
+
+                <p><strong>503 Service Unavailable</strong> - Forno Cheio.</p>
+                <p><em>Proteção contra sobrecarga de memória (Redis). Retorna tempo dinâmico para nova tentativa.</em></p>
+                <pre><code>{
+  "erro": "Forno sem capacidade no momento",
+  "tente_novamente_em_segundos": 12
+}</code></pre>
+            </div>
+        </div>
+    </div>
+
+</body>
+</html>
